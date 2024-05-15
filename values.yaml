@@ -1,0 +1,163 @@
+snapshotsEnabled: false
+# Set provider name and backup storage location bucket name
+configuration:
+  # caso opte por usar secret para as credenciais da cloud, deve-se remover esta extraEnvVars. O valor default é /credentials/cloud e é preenchido automaticamente se credentials.userSecret é true.
+  extraEnvVars:
+    AZURE_CREDENTIALS_FILE: /vault/secrets/credentials-vault.txt
+  backupStorageLocation:
+  - bucket: velero
+    config:
+      resourceGroup: 
+      storageAccount: 
+      subscriptionId: 
+    # caso opte por usar secret, deve-se remover estes comentários.
+    #credential:
+    #  key: credentials-velero.txt
+    #  name: credentials-velero
+    default: true
+    name: default
+    provider: azure
+  #- name: backups-secondary
+  #  bucket: velero-backups
+  #  provider: aws
+  #  config:
+  #    region: us-west-1
+  #   profile: us-west-1-profile
+#  volumeSnapshotLocation:
+#  - name: velero-snapshot
+#    provider: azure
+#    config:
+#      resourceGroup: 
+#      storageAccount: 
+#      subscriptionId: 
+    #credential:
+    #  key: credentials-velero.txt
+    #  name: credentials-velero
+  
+  #features: EnableCSI
+
+# Init containers to add to the Velero deployment's pod spec. At least one plugin provider image is required.
+# If the value is a string then it is evaluated as a template.
+initContainers:
+  - name: velero-plugin-for-microsoft-azure
+    image: velero/velero-plugin-for-microsoft-azure:v1.9.0
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+# caso opte por usar secret, deve-se por useSecret como true.
+credentials:
+  useSecret: false
+
+schedules:
+  mybackupdev:
+    labels:
+      env: dev
+    schedule: "0 * * * *"
+    template:
+      ttl: "240h"
+      includedNamespaces:
+      - nginx-example
+  mybackupfull:
+    labels:
+      env: prod
+    schedule: "*/5 * * * *"
+    template:
+      ttl: "240h"
+      includedNamespaces:
+      - "*"
+
+# Set a service account so that the CRD clean up job has proper permissions to delete CRDs
+serviceAccount:
+  server:
+    name: velero
+
+# The Velero server
+# Annotations to Velero deployment
+annotations:
+  annotation: velero
+  application-type: tool
+
+# Labels to Velero deployment
+labels:
+  label: velero
+  application-type: tool
+
+# Annotations to Velero deployment's template
+podAnnotations:
+  pod-annotation: velero
+  application-type: tool
+  vault.hashicorp.com/agent-inject: 'true'
+  vault.hashicorp.com/role: 'internal-app'
+  vault.hashicorp.com/agent-inject-status: update
+  vault.hashicorp.com/agent-inject-secret-credentials-vault.txt: 'internal/tools/velero'
+  vault.hashicorp.com/agent-inject-template-credentials-vault.txt: |
+    {{- with secret "internal/data/tools/velero" -}}
+    AZURE_STORAGE_ACCOUNT_ACCESS_KEY={{ .Data.data.AZURE_STORAGE_ACCOUNT_ACCESS_KEY }}
+
+    AZURE_CLOUD_NAME={{ .Data.data.AZURE_CLOUD_NAME }}
+    
+    {{- end -}}
+
+# Labels to Velero deployment's template
+podLabels:
+  pod-label: velero
+  application-type: tool
+  # caso opte por usar Azure AD Workload Identity
+  #azure.workload.identity/use: true
+
+# Resources to Velero deployment
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+# The node-agent daemonset
+deployNodeAgent: true
+
+nodeAgent:
+  # Annotations to node-agent daemonset
+  annotations:
+    annotation: node-agent
+    application-type: tool
+  # Labels to node-agent daemonset
+  labels:
+    label: node-agent
+    application-type: tool
+  # Resources to node-agent daemonset
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# The kubectl upgrade/cleanup job
+kubectl:
+  # Annotations to kubectl job
+  annotations:
+    annotation: kubectl
+    application-type: tool
+  # Labels to kubectl job
+  labels:
+    label: kubectl
+    application-type: tool
+  # Resources to kubectl job
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# Whether or not to clean up CustomResourceDefintions when deleting a release.
+# Cleaning up CRDs will delete the BackupStorageLocation and VolumeSnapshotLocation instances, which would have to be reconfigured.
+# Backup data in object storage will _not_ be deleted, however Backup instances in the Kubernetes API will.
+# Always clean up CRDs in CI.
+cleanUpCRDs: true
